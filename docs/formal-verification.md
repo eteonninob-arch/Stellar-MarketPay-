@@ -4,7 +4,9 @@ This document describes how to run formal verification on the **Stellar MarketPa
 
 ## Overview
 
-We use Certora's **CVL (Certora Verification Language)** to mathematically prove three critical safety properties of the escrow contract:
+We use Certora's **CVL (Certora Verification Language)** to mathematically prove critical safety properties of the contract across four specifications:
+
+### Escrow Lifecycle (`escrow.spec`)
 
 | Property | Acceptance Criterion | Description |
 |----------|---------------------|-------------|
@@ -12,12 +14,47 @@ We use Certora's **CVL (Certora Verification Language)** to mathematically prove
 | **AC-2** | `funds cannot be released to a non-freelancer address` | The `freelancer` field in an `Escrow` is immutable after creation. Only the designated client may initiate a release, and the funds always flow to the freelancer (minus platform fees and referral bonuses). |
 | **AC-3** | `an escrow can only be released once` | Once an escrow reaches a terminal status (`Released` or `Refunded`), all further attempts to release, refund, or mutate its status must revert. This prevents double-spending. |
 
+### Milestone Percentage Math (`milestones.spec`)
+
+| Property | Acceptance Criterion | Description |
+|----------|---------------------|-------------|
+| **MS-1** | `fee + referral bonus + freelancer share == payout` | Every leg of a single milestone payout (`amount * pct / 100`) is non-negative and their sum equals the milestone payout without exceeding the escrow amount. |
+| **MS-2** | `sum of milestone splits <= escrow amount` | For any split of up to 5 positive percentages summing to 100, the total payout across all milestones (or any partially settled subset) never exceeds the escrow amount, and rounding dust is strictly less than the milestone count. |
+| **MS-3** | `escrow.amount is immutable` | The escrow principal used as the denominator base for every milestone percentage calculation never changes after creation. |
+| **MS-4** | `milestone resolution is exclusive and final` | Releasing or rejecting a milestone resolves only that milestone; no milestone can be both released and rejected, and resolved flags never revert. |
+| **MS-5** | `cumulative milestone payouts <= escrow amount` | Per-job ghost tracking (`ghost_ms_paid`) verifies that each release/rejection pays out the exact percentage share and cumulative payouts stay within `[0, escrow.amount]`. |
+
+### Dispute Bond Accounting (`disputes.spec`)
+
+| Property | Acceptance Criterion | Description |
+|----------|---------------------|-------------|
+| **DB-1** | `arbitrator fee + winner share + loser share == escrow amount` | Dispute split arithmetic conserves the full escrow principal across arbitrator fee, winner payout, and loser payout. |
+| **DB-2** | `disputes settle an escrow at most once` | Raising or resolving a dispute preserves `escrow.amount`, transitions status to `Disputed` / `Released`, and rejects double resolution or out-of-range split/fee parameters. |
+| **DB-3** | `bond refund / slash exclusivity` | A locked dispute bond is either refunded (`bond_rtn`) **or** slashed (`bond_slsh`) — never both and never more than once — for the exact locked amount, while unbonded disputes pay out zero bond. |
+| **DB-4** | `settled bond always goes to the winner` | Whether refunded to a winning bond-caller or slashed from a losing bond-caller, the bond recipient is always the dispute `winner`. |
+
+### Governance Quorum Rules (`governance.spec`)
+
+| Property | Acceptance Criterion | Description |
+|----------|---------------------|-------------|
+| **GQ-1** | `quorum monotonicity` | Increasing voter turnout, lowering `threshold_bps`, or having a smaller eligible electorate never causes a met quorum (`turnout * 10_000 >= eligible * threshold_bps`) to fail; the cross-multiplied check is equivalent to `turnout >= ceil(eligible * bps / 10_000)`. |
+| **GQ-2** | `vote tallies are monotonically non-decreasing` | `cast_vote` increments total turnout by 1 (`votes_for` or `votes_against`), and no contract operation ever decreases a proposal's vote tallies. |
+| **GQ-3** | `EligibleVoterCount never decreases` | The quorum denominator (`EligibleVoterCount`) is monotonically non-decreasing across all contract operations. |
+| **GQ-4** | `quorum threshold bounds and governance gate` | `QuorumThresholdBps` never exceeds `MAX_QUORUM_THRESHOLD_BPS` (5000 bps), can only be modified by `set_quorum`, and requires a resolved, passed proposal. |
+| **GQ-5** | `proposal resolution is final and enforces quorum + majority` | Once resolved, a proposal's tallies and outcome are immutable, and `result == true` holds if and only if quorum was met and `votes_for > votes_against`. |
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `contracts/certora/escrow.spec` | CVL specification containing all rules, invariants, and ghost variables |
-| `contracts/certora/config.conf` | Certora Prover configuration (JSON5) |
+| `contracts/certora/escrow.spec` | CVL specification for core escrow lifecycle invariants and rules (AC-1 .. AC-3) |
+| `contracts/certora/milestones.spec` | CVL specification for milestone percentage split conservation (MS-1 .. MS-5) |
+| `contracts/certora/disputes.spec` | CVL specification for dispute split conservation and bond refund/slash exclusivity (DB-1 .. DB-4) |
+| `contracts/certora/governance.spec` | CVL specification for governance quorum monotonicity and tally rules (GQ-1 .. GQ-5) |
+| `contracts/certora/config.conf` | Certora Prover configuration for `escrow.spec` |
+| `contracts/certora/milestones.conf` | Certora Prover configuration for `milestones.spec` |
+| `contracts/certora/disputes.conf` | Certora Prover configuration for `disputes.spec` |
+| `contracts/certora/governance.conf` | Certora Prover configuration for `governance.spec` |
 | `contracts/marketpay-contract/src/lib.rs` | The Soroban smart contract source (verification target) |
 
 ## Prerequisites
@@ -54,15 +91,18 @@ We use Certora's **CVL (Certora Verification Language)** to mathematically prove
 
 ## Running Verification
 
-### Full verification (all rules)
+### Full verification (all specs)
 
-From the **project root**, run:
+From the **project root**, run each configuration:
 
 ```bash
 certoraRun contracts/certora/config.conf
+certoraRun contracts/certora/milestones.conf
+certoraRun contracts/certora/disputes.conf
+certoraRun contracts/certora/governance.conf
 ```
 
-This executes all rules defined in `escrow.spec` against the contract. Expected output:
+Expected output for `config.conf` (`escrow.spec`):
 
 ```
 ✅ ac1_create_escrow_increases_ghost               PASSED
@@ -109,6 +149,9 @@ To run a single rule (useful during development):
 
 ```bash
 certoraRun contracts/certora/config.conf --rule ac3_cannot_release_twice
+certoraRun contracts/certora/milestones.conf --rule ms2_sum_of_splits_bounded
+certoraRun contracts/certora/disputes.conf --rule db3_resolve_refunds_xor_slashes
+certoraRun contracts/certora/governance.conf --rule gq1_quorum_monotone_in_turnout
 ```
 
 ### Verifying only invariant rules
@@ -120,27 +163,29 @@ certoraRun contracts/certora/config.conf --rule ac1_
 ## Spec Structure
 
 ```
-escrow.spec
-├── AC-1: Total Funds Invariant
-│   ├── ghost_locked (ghost variable)
-│   ├── Create rules (increase ghost)
-│   ├── Release / Refund / Timeout rules (decrease ghost)
-│   ├── No-op rules (start_work, freeze, unfreeze)
-│   └── Invariant: ghost_locked >= 0
-├── AC-2: Freelancer-Only Release
-│   ├── Authorization rules (only client can release)
-│   ├── Freelancer immutability (ghost_freelancer mapping)
-│   └── Freelancer field preservation rules
-├── AC-3: Single Release
-│   ├── Double-release prevention
-│   ├── Refunded state irreversibility
-│   ├── Released state irreversibility
-│   ├── Milestone single-release
-│   ├── Disputed cannot be released
-│   └── Released cannot restart work
-└── Supplementary: State-Transition Sanity
-    ├── Valid transitions from Locked
-    └── Valid transitions from InProgress
+contracts/certora/
+├── escrow.spec (config.conf)
+│   ├── AC-1: Total Funds Invariant (ghost_locked)
+│   ├── AC-2: Freelancer-Only Release & Immutability
+│   ├── AC-3: Single Release & Terminal Status Irreversibility
+│   └── Supplementary: State-Transition Sanity
+├── milestones.spec (milestones.conf)
+│   ├── MS-1: Single Milestone Payout Conservation (fee + bonus + freelancer == payout)
+│   ├── MS-2: Sum of Splits & Partial Settlement Bounded by Escrow Amount
+│   ├── MS-3: Escrow Amount Immutability
+│   ├── MS-4: Exclusive & Irreversible Milestone Resolution
+│   └── MS-5: Cumulative Milestone Payout Invariant (ghost_ms_paid)
+├── disputes.spec (disputes.conf)
+│   ├── DB-1: Dispute Split Conservation (arbitrator fee + winner + loser == amount)
+│   ├── DB-2: Single Dispute Settlement & Input Bounds
+│   ├── DB-3: Bond Refund XOR Slash Exclusivity & At-Most-Once Invariant
+│   └── DB-4: Bond Settlement Recipient Is Always the Winner
+└── governance.spec (governance.conf)
+    ├── GQ-1: Quorum Monotonicity (turnout, threshold, electorate, ceiling equivalence)
+    ├── GQ-2: Monotonic Vote Tallies
+    ├── GQ-3: Monotonic EligibleVoterCount Denominator
+    ├── GQ-4: Quorum Threshold Bounds & Governance Gate
+    └── GQ-5: Finality of Resolved Proposals & Quorum + Majority Enforcement
 ```
 
 ## Interpreting Results

@@ -65,7 +65,20 @@ jobs:
         if: ${{ env.HAS_CERTORAKEY == 'true' }}
         env:
           CERTORAKEY: ${{ secrets.CERTORAKEY }}
-        run: certoraRun contracts/certora/config.conf
+        run: |
+          # Run every spec even if an earlier one fails, then fail the step
+          # if any of them reported a violation.
+          status=0
+          for conf in \
+            contracts/certora/config.conf \
+            contracts/certora/milestones.conf \
+            contracts/certora/disputes.conf \
+            contracts/certora/governance.conf; do
+            echo "::group::certoraRun $conf"
+            certoraRun "$conf" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
 
       - name: Skip (no CERTORAKEY)
         if: ${{ env.HAS_CERTORAKEY != 'true' }}
@@ -77,7 +90,11 @@ jobs:
           echo "### Certora Formal Verification Results" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Contract: \`marketpay-contract\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "Spec: \`contracts/certora/escrow.spec\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Specs:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`contracts/certora/escrow.spec\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`contracts/certora/milestones.spec\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`contracts/certora/disputes.spec\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- \`contracts/certora/governance.spec\`" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "If the Prover reported any VIOLATED rules, see the full trace in" >> "$GITHUB_STEP_SUMMARY"
           echo "the step output above and in the Certora dashboard linked from the run." >> "$GITHUB_STEP_SUMMARY"
