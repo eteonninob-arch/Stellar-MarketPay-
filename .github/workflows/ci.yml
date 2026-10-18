@@ -54,9 +54,15 @@ jobs:
         continue-on-error: true
 
   backend:
-    name: Backend
+    name: Backend (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     needs: secrets-scan
+    strategy:
+      fail-fast: false
+      matrix:
+        # 20 = minimum supported (engines >=20.19) and production image;
+        # 22 = early signal for the next LTS migration.
+        node-version: [20, 22]
     defaults:
       run:
         working-directory: backend
@@ -88,7 +94,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
@@ -108,10 +114,11 @@ jobs:
         continue-on-error: true
 
       - name: Mutation tests
+        if: matrix.node-version == 20
         run: npm run stryker
 
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: always() && matrix.node-version == 20
         with:
           name: backend-coverage
           path: backend/coverage/

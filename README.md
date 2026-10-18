@@ -84,7 +84,7 @@ stellar-marketpay/
 
 | Tool             | Version                |
 | ---------------- | ---------------------- |
-| Node.js          | ≥ 18.x                 |
+| Node.js          | ≥ 20.19                |
 | npm              | Latest                 |
 | Rust + Cargo     | ≥ 1.74 (for contracts) |
 | Freighter Wallet | Browser extension      |

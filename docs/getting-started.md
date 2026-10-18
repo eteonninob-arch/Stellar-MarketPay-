@@ -9,7 +9,7 @@ This guide will walk you through setting up the project locally and completing a
 
 Before you begin, ensure you have the following installed:
 
-- **Node.js** (v18 or higher)
+- **Node.js** (v20.19 or higher; CI tests the backend on Node 20 and 22)
 - **Git**
 - A modern browser (Chrome recommended)
 
